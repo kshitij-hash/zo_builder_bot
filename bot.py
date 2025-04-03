@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 import datetime
 import logging
-
+from webhooks import start_webhook_server
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
     CallbackContext,
@@ -478,10 +478,17 @@ def send_github_engagement_reminder(context: CallbackContext):
 
 
 def main() -> None:
+    # Start both the telegram bot and the handler server in separate threads
+    from threading import Thread
+
+    # Starting the webhook server
+    webhook_server = Thread(target=start_webhook_server)
+    webhook_server.daemon = True
+    webhook_server.start()
+
     """Start the bot."""
     # Create the Updater and pass it your bot's token
     updater = Updater(TELEGRAM_TOKEN)
-
     # Get the dispatcher to register handlers
     dispatcher = updater.dispatcher
 
