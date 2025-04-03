@@ -1,4 +1,4 @@
-import datetime  # Add this import for the datetime module
+import datetime
 
 import pymongo
 from pymongo.mongo_client import MongoClient
@@ -46,7 +46,7 @@ def get_or_create_user(user_id, username=None, first_name=None):
             "wallet_address": None,
             "builder_score": 0,
             "activities": [],
-            "created_at": datetime.datetime.now(),  # Fixed: use Python's datetime
+            "created_at": datetime.datetime.now(),
         }
         users_collection.insert_one(user)
         return user, True  # Return user and True to indicate this is a new user
@@ -59,20 +59,11 @@ def get_user(user_id):
     return users_collection.find_one({"user_id": user_id})
 
 
-def update_user_github(
-    user_id, github_username, access_token=None, verified=True, github_info=None
-):
-    """Update user's GitHub information in the database."""
-    update_data = {"github_username": github_username, "github_verified": verified}
-
-    if access_token:
-        update_data["github_access_token"] = access_token
-
-    if github_info:
-        update_data["github_info"] = github_info
-
-    # Update user data directly in the database
-    result = users_collection.update_one({"user_id": user_id}, {"$set": update_data})
+def update_user_github(user_id, github_username):
+    """Update user's GitHub username in the database."""
+    result = users_collection.update_one(
+        {"user_id": user_id}, {"$set": {"github_username": github_username}}
+    )
     return result.modified_count > 0
 
 
@@ -90,7 +81,7 @@ def update_builder_score(user_id, activity_type, score_change):
         "user_id": user_id,
         "activity_type": activity_type,
         "score_change": score_change,
-        "timestamp": datetime.datetime.now(),  # Fixed: use Python's datetime
+        "timestamp": datetime.datetime.now(),
     }
     activities_collection.insert_one(activity)
 
@@ -108,7 +99,7 @@ def get_top_builders(limit=10):
 
 def save_project(project_data):
     """Save a project to the database."""
-    project_data["created_at"] = datetime.datetime.now()  # Fixed: use Python's datetime
+    project_data["created_at"] = datetime.datetime.now()
     return projects_collection.insert_one(project_data)
 
 
@@ -120,7 +111,6 @@ def get_projects(limit=10):
 def get_all_users():
     """Get all users from the database"""
     try:
-        # Use the MongoDB collection already defined at the top
         users = list(
             users_collection.find(
                 {}, {"user_id": 1, "first_name": 1, "github_username": 1, "_id": 0}
