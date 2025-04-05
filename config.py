@@ -16,8 +16,9 @@ GITHUB_REPO = os.getenv("GITHUB_REPO", "organization/zo-house")
 MONGODB_URI = "mongodb+srv://kshitij:DpBYFpgm1WIFPfwO@cluster0.svflpiw.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
 MONGODB_DB = os.getenv("MONGODB_DB", "zo_house_bot")
 
-# DoraHacks configuration (placeholder for now)
-DORAHACKS_API_URL = os.getenv("DORAHACKS_API_URL", "")
+# Browser automation settings
+HEADLESS_BROWSER = os.getenv("HEADLESS_BROWSER", "True").lower() == "true"
+BROWSER_TIMEOUT = int(os.getenv("BROWSER_TIMEOUT", "30"))  # Timeout in seconds
 
 # Builder Score configuration
 SCORE_WEIGHTS = {
@@ -27,10 +28,3 @@ SCORE_WEIGHTS = {
     "project_submission": 10,
     "nomination": 3,
 }
-
-# Admin user IDs (Telegram user IDs of administrators)
-ADMIN_IDS = (
-    list(map(int, os.getenv("ADMIN_IDS", "").split(",")))
-    if os.getenv("ADMIN_IDS")
-    else []
-)
