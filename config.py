@@ -16,10 +16,6 @@ GITHUB_REPO = os.getenv("GITHUB_REPO", "organization/zo-house")
 MONGODB_URI = "mongodb+srv://kshitij:DpBYFpgm1WIFPfwO@cluster0.svflpiw.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
 MONGODB_DB = os.getenv("MONGODB_DB", "zo_house_bot")
 
-# Browser automation settings
-HEADLESS_BROWSER = os.getenv("HEADLESS_BROWSER", "True").lower() == "true"
-BROWSER_TIMEOUT = int(os.getenv("BROWSER_TIMEOUT", "30"))  # Timeout in seconds
-
 # Builder Score configuration
 SCORE_WEIGHTS = {
     "github_commit": 2,
