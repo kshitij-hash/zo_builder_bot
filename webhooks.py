@@ -6,6 +6,13 @@ import requests
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request, status
 
+from database import (
+    update_github_contribution,
+    get_all_users,
+    update_user_builder_score,
+)
+from builder_score import compute_builder_scores
+
 app = FastAPI()
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "fallback_token")
@@ -352,10 +359,43 @@ async def github_webhook(request: Request):
 
         if event == "push":
             message = handle_push_event(payload)
+
+            if "commits" in payload and len(payload["commits"]) > 0:
+                for commit in payload["commits"]:
+                    if "author" in commit and "username" in commit["author"]:
+                        github_username = commit["author"]["username"]
+                        update_github_contribution(github_username, "commits")
+
+            users_data = get_all_users()
+            if users_data:
+                response = compute_builder_scores(users_data)
+                for r in response:
+                    update_user_builder_score(r.get("user_id"), r.get("builder_score"))
+
         elif event == "pull_request":
             message = handle_pull_request(payload)
+
+            if payload.get("action") == "opened":
+                github_username = payload["pull_request"]["user"]["login"]
+                update_github_contribution(github_username, "prs")
+
+            users_data = get_all_users()
+            if users_data:
+                response = compute_builder_scores(users_data)
+                for r in response:
+                    update_user_builder_score(r.get("user_id"), r.get("builder_score"))
         elif event == "issues":
             message = handle_issues_event(payload)
+
+            if payload.get("action") == "opened":
+                github_username = payload["issue"]["user"]["login"]
+                update_github_contribution(github_username, "issues")
+
+            users_data = get_all_users()
+            if users_data:
+                response = compute_builder_scores(users_data)
+                for r in response:
+                    update_user_builder_score(r.get("user_id"), r.get("builder_score"))
         else:
             return {"status": "ignored", "event": event}
 

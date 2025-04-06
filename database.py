@@ -45,7 +45,15 @@ def get_or_create_user(user_id, username=None, first_name=None):
             "github_username": None,
             "wallet_address": None,
             "builder_score": 0,
-            "activities": [],
+            "telegram_activity": {
+                "messages": 0,
+                "replies": 0,
+            },
+            "github_contributions": {
+                "commits": 0,
+                "prs": 0,
+                "issues": 0,
+            },
             "created_at": datetime.datetime.now(),
         }
         users_collection.insert_one(user)
@@ -74,23 +82,6 @@ def update_user_wallet(user_id, wallet_address):
     )
 
 
-def update_builder_score(user_id, activity_type, score_change):
-    """Update a user's builder score."""
-    # Record the activity
-    activity = {
-        "user_id": user_id,
-        "activity_type": activity_type,
-        "score_change": score_change,
-        "timestamp": datetime.datetime.now(),
-    }
-    activities_collection.insert_one(activity)
-
-    # Update the user's score
-    return users_collection.update_one(
-        {"user_id": user_id},
-        {"$inc": {"builder_score": score_change}, "$push": {"activities": activity}},
-    )
-
 
 def get_top_builders(limit=10):
     """Get the top builders by score."""
@@ -111,12 +102,84 @@ def get_projects(limit=10):
 def get_all_users():
     """Get all users from the database"""
     try:
-        users = list(
-            users_collection.find(
-                {}, {"user_id": 1, "first_name": 1, "github_username": 1, "_id": 0}
-            )
-        )
+        users = list(users_collection.find({}, {"_id": 0}))
         return users
     except Exception as e:
         print(f"Error getting all users: {e}")
         return []
+
+
+def update_telegram_activity(user_id, activity_type):
+    """
+    Update a user's Telegram activity metrics.
+
+    Args:
+        user_id (int): The Telegram user ID
+        activity_type (str): One of 'messages', 'replies'
+
+    Returns:
+        bool: True if update was successful, False otherwise
+    """
+    if activity_type not in ["messages", "replies"]:
+        print(f"Invalid activity type: {activity_type}")
+        return False
+
+    # Update the specific activity count
+    update_field = f"telegram_activity.{activity_type}"
+    result = users_collection.update_one(
+        {"user_id": user_id}, {"$inc": {update_field: 1}}
+    )
+
+    return result.modified_count > 0
+
+
+def get_user_by_github_username(github_username):
+    """Get a user document by GitHub username."""
+    return users_collection.find_one({"github_username": github_username})
+
+
+def update_github_contribution(github_username, contribution_type):
+    """
+    Update a user's GitHub contributions count.
+
+    Args:
+        github_username (str): The GitHub username
+        contribution_type (str): One of 'commits', 'prs', or 'issues'
+
+    Returns:
+        bool: True if user was found and updated, False otherwise
+    """
+    if contribution_type not in ["commits", "prs", "issues"]:
+        print(f"Invalid contribution type: {contribution_type}")
+        return False
+
+    # Find user by GitHub username
+    user = get_user_by_github_username(github_username)
+    if not user:
+        print(f"No user found with GitHub username: {github_username}")
+        return False
+
+    # Update the specific contribution count
+    update_field = f"github_contributions.{contribution_type}"
+    result = users_collection.update_one(
+        {"github_username": github_username}, {"$inc": {update_field: 1}}
+    )
+
+    return result.modified_count > 0
+
+
+def update_user_builder_score(user_id, score):
+    """
+    Update a user's builder score.
+
+    Args:
+        user_id (int): The Telegram user ID
+        score (float): The new builder score
+
+    Returns:
+        bool: True if update was successful, False otherwise
+    """
+    result = users_collection.update_one(
+        {"user_id": user_id}, {"$set": {"builder_score": score}}
+    )
+    return result.modified_count > 0

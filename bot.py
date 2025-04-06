@@ -13,6 +13,7 @@ from telegram.ext import (  # type: ignore
 )
 
 import database
+from builder_score import compute_builder_scores
 from config import (
     TELEGRAM_TOKEN,
 )
@@ -100,7 +101,6 @@ def start(update: Update, context: CallbackContext) -> None:
     # Check if this is a group chat
     if not is_private_chat(update):
         # Remember originating group
-        print(update)
         group_id = update.message.chat.id
         user_setup_state[user_id] = {"group_id": group_id, "step": "invited"}
 
@@ -199,6 +199,9 @@ def help_command(update: Update, context: CallbackContext) -> None:
         "/leaderboard \\- View top builders\n"
         "/recap \\- See weekly community recap\n\n"
         "For admin commands, use /adminhelp"
+        "*Community:*\n"
+        "/leaderboard \\- View top builders\n"
+        "/recap \\- See weekly community recap\n"
     )
     update.message.reply_text(help_text, parse_mode="MarkdownV2")
 
@@ -557,7 +560,6 @@ def save_wallet_address(update: Update, context: CallbackContext) -> int:
             group_url = (
                 f"https://t.me/c/{str(group_id)[1:]}/{welcome_back_msg.message_id}"
             )
-            print(group_url)
 
             keyboard = [[InlineKeyboardButton("Back to Group", url=group_url)]]
             reply_markup = InlineKeyboardMarkup(keyboard)
@@ -795,6 +797,81 @@ def admin_help_command(update: Update, context: CallbackContext) -> None:
     update.message.reply_text(admin_text, parse_mode="MarkdownV2")
 
 
+def handle_group_message(update: Update, context: CallbackContext) -> None:
+    """Process group messages to track user activity."""
+    # Debug logging
+    logger.info(
+        f"Received message in chat {update.effective_chat.id}, group ID env var: {TELEGRAM_GROUP_ID}"
+    )
+
+    # Only process messages from the configured group
+    if not TELEGRAM_GROUP_ID:
+        logger.warning("TELEGRAM_GROUP_ID not set in environment variables")
+        return
+
+    # Check if ID matches and log the result
+    if str(update.effective_chat.id) != str(TELEGRAM_GROUP_ID):
+        logger.info(
+            f"Message not from target group. Got {update.effective_chat.id}, expected {TELEGRAM_GROUP_ID}"
+        )
+        return
+
+    logger.info("Message is from target group - processing")
+
+    # Get basic message info
+    user = update.effective_user
+    if not user:
+        logger.warning("No user found in the message")
+        return
+
+    user_id = user.id
+    message = update.effective_message
+    logger.info(f"Processing message from user {user_id}: {user.first_name}")
+
+    # Skip messages with commands
+    if message.text and message.text.startswith("/"):
+        logger.info("Skipping command message")
+        return
+
+    # Get or create user in database
+    try:
+        database.get_or_create_user(user_id, user.username, user.first_name)
+        logger.info(f"User {user_id} retrieved or created in database")
+    except Exception as e:
+        logger.error(f"Error getting/creating user: {e}")
+        return
+
+    # Update message count
+    try:
+        result = database.update_telegram_activity(user_id, "messages")
+        users_data = database.get_all_users()
+        if users_data:
+            response = compute_builder_scores(users_data)
+            for r in response:
+                database.update_user_builder_score(
+                    r.get("user_id"), r.get("builder_score")
+                )
+        logger.info(f"Updated message count for user {user_id}, result: {result}")
+    except Exception as e:
+        logger.error(f"Error updating telegram activity: {e}")
+
+    # If it's a reply to another message, count it as a reply
+    if message.reply_to_message:
+        try:
+            database.update_telegram_activity(user_id, "replies")
+            users_data = database.get_all_users()
+            if users_data:
+                response = compute_builder_scores(users_data)
+                for r in response:
+                    database.update_user_builder_score(
+                        r.get("user_id"), r.get("builder_score")
+                    )
+
+            logger.info(f"Updated reply count for user {user_id}")
+        except Exception as e:
+            logger.error(f"Error updating reply count: {e}")
+
+
 def main() -> None:
     # Start both the telegram bot and the handler server in separate threads
 
@@ -804,13 +881,14 @@ def main() -> None:
     # Get the dispatcher to register handlers
     dispatcher = updater.dispatcher
 
+    print(f"Starting bot with TELEGRAM_GROUP_ID: {TELEGRAM_GROUP_ID}")
+
     # Basic command handlers
     dispatcher.add_handler(CommandHandler("help", help_command))
     dispatcher.add_handler(CommandHandler("projects", projects_command))
     dispatcher.add_handler(CommandHandler("contribute", contribute_command))
     dispatcher.add_handler(CommandHandler("test", test_command))
 
-    # Setup profile conversation handlers
     # This is the main conversation handler for profile setup
     profile_setup_handler = ConversationHandler(
         entry_points=[
@@ -851,6 +929,12 @@ def main() -> None:
     # Admin commands
     dispatcher.add_handler(CommandHandler("adminhelp", admin_help_command))
 
+    dispatcher.add_handler(
+        MessageHandler(
+            Filters.chat_type.groups & ~Filters.command, handle_group_message
+        ),
+        group=10,
+    )
     # Start the Bot
     updater.start_polling()
     updater.idle()
