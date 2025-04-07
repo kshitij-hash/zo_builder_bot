@@ -533,7 +533,7 @@ def save_wallet_address(update: Update, context: CallbackContext) -> int:
     if len(wallet_address) > 10:
         wallet_display = wallet_address[:6] + "..." + wallet_address[-4:]
     else:
-        wallet_display = wallet_address
+        wallet_display = wallet_display
 
     escaped_wallet = escape_markdown_v2(wallet_display)
 
@@ -872,6 +872,113 @@ def handle_group_message(update: Update, context: CallbackContext) -> None:
             logger.error(f"Error updating reply count: {e}")
 
 
+def leaderboard_command(update: Update, context: CallbackContext) -> None:
+    """Show the top builders by builder score."""
+    try:
+        # Get all users from the database
+        users = database.get_all_users()
+
+        users_with_scores = [
+            user
+            for user in users
+            if user.get("builder_score") is not None
+            and float(user.get("builder_score", 0)) > 0
+        ]
+
+        # Debug log the users data
+        logger.info(f"Retrieved users data: {users_with_scores}")
+
+        # Check if users is None or empty
+        if not users_with_scores:
+            update.message.reply_text(
+                "No builders found yet\\! Be the first to contribute\\!",
+                parse_mode="MarkdownV2",
+            )
+            return
+
+        # Sort users by builder score in descending order
+        # Make sure to handle None values and convert to float for sorting
+        sorted_users = sorted(
+            users_with_scores,
+            key=lambda x: float(x.get("builder_score", 0)),
+            reverse=True,
+        )
+
+        # Take top 10 users
+        top_users = sorted_users[:10]
+
+        if not top_users:
+            update.message.reply_text(
+                "No builders found yet\\! Be the first to contribute\\!",
+                parse_mode="MarkdownV2",
+            )
+            return
+
+        # Format the leaderboard message
+        leaderboard_text = "🏆 *Zo House Builder Leaderboard* 🏆\n\n"
+
+        for i, user in enumerate(top_users):
+            # Get user details
+            position = i + 1
+            name = user.get("first_name", "Unknown")
+            username = user.get("username", "no_username")
+
+            # Handle different types of builder_score (float, int, None)
+            score = user.get("builder_score", 0)
+            if score is None:
+                score = 0
+
+            # Format score to 2 decimal places if it's a float
+            if isinstance(score, float):
+                score_str = f"{score:.2f}"
+            else:
+                score_str = str(score)
+
+            github = user.get("github_username", "Not linked")
+            if github is None:
+                github = "Not linked"
+
+            # Format medal emojis for top 3
+            medal = (
+                "🥇"
+                if position == 1
+                else "🥈"
+                if position == 2
+                else "🥉"
+                if position == 3
+                else f"{position}\\."
+            )
+
+            # Escape special characters for MarkdownV2
+            escaped_name = escape_markdown_v2(str(name))
+            escaped_username = escape_markdown_v2(
+                str(username) if username else "no\\_username"
+            )
+            escaped_github = escape_markdown_v2(str(github))
+            escaped_score = escape_markdown_v2(score_str)
+
+            # Add user to leaderboard text
+            leaderboard_text += f"{medal} *{escaped_name}*"
+            if username:
+                leaderboard_text += f" \\(@{escaped_username}\\)"
+            leaderboard_text += "\n"
+            leaderboard_text += f"   ├ Score: {escaped_score} points\n"
+            leaderboard_text += f"   └ GitHub: {escaped_github}\n\n"
+
+        # Add motivational footer
+        leaderboard_text += "_Contribute more to rise in the ranks\\!_ 🚀"
+
+        # Send the leaderboard message
+        update.message.reply_text(leaderboard_text, parse_mode="MarkdownV2")
+
+    except Exception as e:
+        logger.error(f"Error displaying leaderboard: {e}", exc_info=True)
+        update.message.reply_text(
+            "Sorry, there was an error generating the leaderboard\\. Please try again later\\.",
+            parse_mode="MarkdownV2",
+        )
+
+
 def main() -> None:
     # Start both the telegram bot and the handler server in separate threads
 
@@ -888,6 +995,9 @@ def main() -> None:
     dispatcher.add_handler(CommandHandler("projects", projects_command))
     dispatcher.add_handler(CommandHandler("contribute", contribute_command))
     dispatcher.add_handler(CommandHandler("test", test_command))
+    dispatcher.add_handler(
+        CommandHandler("leaderboard", leaderboard_command)
+    )  # Add this line
 
     # This is the main conversation handler for profile setup
     profile_setup_handler = ConversationHandler(
