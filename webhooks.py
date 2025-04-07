@@ -67,12 +67,13 @@ def handle_push_event(payload: dict) -> str:
         branch = payload["ref"].split("/")[-1]
         commit_count = len(payload["commits"])
         pusher = payload["pusher"]["name"]
-        pusher_url = f"https://github.com/{pusher}"  # Construct pusher URL
+        pusher_url = f"https://github.com/{pusher}"
         compare_url = payload["compare"]
 
         is_new_branch = payload.get("created", False)
         is_deleted_branch = payload.get("deleted", False)
 
+        # Escape values
         branch_name = escape_md_v2(branch)
         repo_name = escape_md_v2(repo)
         pusher_name = escape_md_v2(pusher)
@@ -82,88 +83,50 @@ def handle_push_event(payload: dict) -> str:
 
         if is_deleted_branch:
             return (
-                f"🗑️ *Branch Deleted*\n"
-                f"📂 Repository: [{repo_name}]({repo_url_escaped})\n"
-                f"🌿 Branch: *{branch_name}*\n"
-                f"👤 By: [{pusher_name}]({pusher_url_escaped})"
+                f"🗑️ *Branch Deleted*\n\n"
+                f"[{pusher_name}]({pusher_url_escaped}) just deleted branch `{branch_name}` "
+                f"from [{repo_name}]({repo_url_escaped})"
             )
 
         if is_new_branch:
             message = (
-                f"🌱 *New Branch Created*\n"
-                f"📂 Repository: [{repo_name}]({repo_url_escaped})\n"
-                f"🌿 Branch: *{branch_name}*\n"
-                f"👤 By: [{pusher_name}]({pusher_url_escaped})\n"
+                f"🌱 *New Branch Alert\\!*\n\n"
+                f"[{pusher_name}]({pusher_url_escaped}) created branch `{branch_name}` "
+                f"in [{repo_name}]({repo_url_escaped})"
             )
-        else:
-            message = (
-                f"📌 *New Push to [{repo_name}]({repo_url_escaped})*\n"
-                f"🌿 Branch: *{branch_name}*\n"
-                f"👤 By: [{pusher_name}]({pusher_url_escaped})\n"
-            )
+            return message
+        
+        # For regular pushes, make it more conversational
+        message = (
+            f"💫 *Fresh Code Alert\\!*\n\n"
+            f"[{pusher_name}]({pusher_url_escaped}) just pushed "
+            f"{commit_count} {('commit' if commit_count == 1 else 'commits')} "
+            f"to `{branch_name}` in [{repo_name}]({repo_url_escaped})"
+        )
 
-        message += f"🔢 Commits: {commit_count}\n\n"
-
-        if commit_count > 0:
-            max_commits = min(5, commit_count)
-            message += "*Latest Commits:*\n"
-
-            for i in range(max_commits):
+        # Only show latest commit for bigger pushes
+        if commit_count == 1:
+            commit = payload["commits"][0]
+            commit_msg = commit["message"].split("\n")[0]
+            if len(commit_msg) > 70:
+                commit_msg = commit_msg[:67] + "..."
+            message += f"\n\n💬 \"{escape_md_v2(commit_msg)}\""
+        elif commit_count > 1 and commit_count <= 3:
+            message += "\n\n*Latest commits:*"
+            for i in range(min(commit_count, 3)):
                 commit = payload["commits"][i]
-                short_hash = commit["id"][:7]
-                commit_url = f"{repo_url}/commit/{commit['id']}"
-                commit_url_escaped = escape_md_v2(commit_url)
-
                 commit_msg = commit["message"].split("\n")[0]
                 if len(commit_msg) > 50:
                     commit_msg = commit_msg[:47] + "..."
-                commit_msg = escape_md_v2(commit_msg)
-
-                author = commit["author"]["name"]
-                author_username = commit["author"].get("username", author)
-                author_url = f"https://github.com/{author_username}"
-                author_name_escaped = escape_md_v2(author)
-                author_url_escaped = escape_md_v2(author_url)
-
-                message += f"• [`{short_hash}`]({commit_url_escaped}) {commit_msg} \\- [_{author_name_escaped}_]({author_url_escaped})\n"
-
-            if commit_count > max_commits:
-                message += f"_\\+ {commit_count - max_commits} more commits_\n"
-
-        if commit_count == 1 and "head_commit" in payload and payload["head_commit"]:
-            head_commit = payload["head_commit"]
-            added = len(head_commit.get("added", []))
-            modified = len(head_commit.get("modified", []))
-            removed = len(head_commit.get("removed", []))
-
-            if added > 0 or modified > 0 or removed > 0:
-                message += "\n📊 *Changes:* "
-                changes = []
-                if added > 0:
-                    changes.append(f"➕ {added} added")
-                if modified > 0:
-                    changes.append(f"📝 {modified} modified")
-                if removed > 0:
-                    changes.append(f"➖ {removed} removed")
-                message += ", ".join(changes)
-
-                if modified > 0 and len(head_commit.get("modified", [])) > 0:
-                    files = head_commit.get("modified", [])
-                    message += "\n\n*Modified files:*"
-                    for i, file in enumerate(files[:3]):
-                        file_url = f"{repo_url}/blob/{head_commit['id']}/{file}"
-                        file_escaped = escape_md_v2(file)
-                        file_url_escaped = escape_md_v2(file_url)
-                        message += f"\n• [`{file_escaped}`]({file_url_escaped})"
-                    if len(files) > 3:
-                        message += f"\n_\\+ {len(files) - 3} more files_"
-
-        message += f"\n\n[🔍 View All Changes]({compare_url_escaped})"
+                message += f"\n• {escape_md_v2(commit_msg)}"
+        
+        # Add a call to action
+        message += f"\n\n[🔍 See what's changed]({compare_url_escaped})"
 
         return message
     except Exception as e:
         print(f"Error formatting push message: {str(e)}")
-        return f"New push to repository {escape_md_v2(payload.get('repository', {}).get('full_name', 'unknown'))}"
+        return f"New code pushed to {escape_md_v2(payload.get('repository', {}).get('full_name', 'unknown'))}"
 
 
 def handle_pull_request(payload: dict) -> str:
@@ -174,101 +137,69 @@ def handle_pull_request(payload: dict) -> str:
         # Basic PR information
         repo = pr["base"]["repo"]["name"]
         repo_url = pr["base"]["repo"]["html_url"]
-        pr_number = pr["number"]
         title = pr["title"]
-        body = pr["body"] if pr["body"] else "No description provided"
         user = pr["user"]["login"]
         user_url = pr["user"]["html_url"]
         pr_url = pr["html_url"]
 
         # Branch information
-        head_branch = pr["head"]["ref"]
         base_branch = pr["base"]["ref"]
 
         # State information
         is_merged = pr.get("merged", False)
         is_draft = pr.get("draft", False)
 
-        # PR stats
-        additions = pr.get("additions", 0)
-        deletions = pr.get("deletions", 0)
-        changed_files = pr.get("changed_files", 0)
-
-        # Escape values - with better handling
+        # Escape values
         title_escaped = escape_md_v2(title)
         repo_escaped = escape_md_v2(repo)
         repo_url_escaped = escape_md_v2(repo_url)
         user_escaped = escape_md_v2(user)
         user_url_escaped = escape_md_v2(user_url)
         pr_url_escaped = escape_md_v2(pr_url)
-        head_branch_escaped = escape_md_v2(head_branch)
-        base_branch_escaped = escape_md_v2(base_branch)
 
-        # Draft indicator
-        draft_text = " \\(Draft\\)" if is_draft else ""
+        # Fun emojis for PR actions
+        action_emojis = {
+            "opened": "🚀",
+            "closed": "🔒",
+            "merged": "🎉"
+        }
 
         if action == "opened":
-            # Simplify the description handling to avoid formatting issues
-            short_body = body
-            if len(body) > 100:  # Keep description shorter to reduce formatting issues
-                short_body = body[:97] + "..."
-            body_escaped = escape_md_v2(short_body)
-
+            draft_text = " \\(Draft\\)" if is_draft else ""
+            
             # Create labels string if labels exist
             labels_text = ""
             if pr.get("labels") and len(pr["labels"]) > 0:
-                label_names = []
-                for label in pr["labels"]:
-                    name = escape_md_v2(label["name"])
-                    label_names.append(f"`{name}`")
-                labels_text = f"\n🏷 Labels: {', '.join(label_names)}"
+                label_names = [f"`{escape_md_v2(label['name'])}`" for label in pr["labels"][:2]]
+                if len(pr["labels"]) > 2:
+                    label_names.append("\\+more")
+                labels_text = f" • {', '.join(label_names)}"
 
-            # Stats text for opened PRs
-            stats_text = (
-                f"\n📊 Changes: \\+{additions}, \\-{deletions}, {changed_files} files"
-            )
-
-            # Construct message with focus on essential information
+            # Construct a shorter, more engaging message
             message = (
-                f"🔀 *New Pull Request{draft_text}*\n\n"
-                f"📝 Title: *{title_escaped}*\n"
-                f"📂 Repository: [{repo_escaped}]({repo_url_escaped})\n"
-                f"👤 Created by: [{user_escaped}]({user_url_escaped})\n"
-                f"🔀 Branches: `{head_branch_escaped}` → `{base_branch_escaped}`"
-                f"{stats_text}"
-                f"{labels_text}"
-                f"💬 Description: {body_escaped}\n\n"
-                f"[View Pull Request]({pr_url_escaped})"
+                f"{action_emojis['opened']} *New PR Alert{draft_text}\\!*\n\n"
+                f"*{title_escaped}*\n"
+                f"👤 [{user_escaped}]({user_url_escaped}) wants to merge changes into [{repo_escaped}]({repo_url_escaped})\n"
+                f"{labels_text}\n\n"
+                f"[Check it out \\→]({pr_url_escaped})"
             )
 
         elif action == "closed":
-            # Different message for merged vs. closed without merging
             if is_merged:
-                # Check for merger info
-                merger_text = ""
-                if pr.get("merged_by"):
-                    merger = pr["merged_by"]
-                    merger_name = escape_md_v2(merger["login"])
-                    merger_text = f"\n🧙 Merged by: {merger_name}"
-
+                # More celebratory message for merged PRs
                 message = (
-                    f"✅ *Pull Request Merged*\n\n"
-                    f"📝 Title: *{title_escaped}*\n"
-                    f"📂 Repository: [{repo_escaped}]({repo_url_escaped})\n"
-                    f"👤 Author: [{user_escaped}]({user_url_escaped})\n"
-                    f"🔢 PR\\#{pr_number}\n"
-                    f"🔀 `{head_branch_escaped}` → `{base_branch_escaped}`"
-                    f"{merger_text}\n\n"
-                    f"[View Merged PR]({pr_url_escaped})"
+                    f"{action_emojis['merged']} *PR Merged Successfully\\!*\n\n"
+                    f"*{title_escaped}* just landed in `{escape_md_v2(base_branch)}`\\!\n"
+                    f"👏 Kudos to [{user_escaped}]({user_url_escaped}) for the contribution\\!\n\n"
+                    f"[See the merged PR \\→]({pr_url_escaped})"
                 )
             else:
+                # Lighter tone for closed PRs
                 message = (
-                    f"❌ *Pull Request Closed*\n\n"
-                    f"📝 Title: *{title_escaped}*\n"
-                    f"📂 Repository: [{repo_escaped}]({repo_url_escaped})\n"
-                    f"👤 Author: [{user_escaped}]({user_url_escaped})\n"
-                    f"🔢 PR\\#{pr_number}\n\n"
-                    f"[View Closed PR]({pr_url_escaped})"
+                    f"{action_emojis['closed']} *PR Closed*\n\n"
+                    f"*{title_escaped}*\n"
+                    f"This PR from [{user_escaped}]({user_url_escaped}) to [{repo_escaped}]({repo_url_escaped}) was closed without merging\\.\n\n"
+                    f"[See details \\→]({pr_url_escaped})"
                 )
         return message
     except Exception as e:
@@ -281,59 +212,45 @@ def handle_issues_event(payload: dict) -> str:
         action = payload["action"]
         issue = payload["issue"]
         repo = payload["repository"]["name"]
+        repo_url = payload["repository"]["html_url"]
         title = issue["title"]
         user = issue["user"]["login"]
-        url = issue["html_url"]
+        user_url = issue["user"]["html_url"]
+        issue_url = issue["html_url"]
+        issue_number = issue["number"]
+
+        # Escape values
+        title_escaped = escape_md_v2(title)
+        repo_escaped = escape_md_v2(repo)
+        repo_url_escaped = escape_md_v2(repo_url)
+        user_escaped = escape_md_v2(user)
+        user_url_escaped = escape_md_v2(user_url)
+        issue_url_escaped = escape_md_v2(issue_url)
 
         if action == "opened":
-            description = issue["body"] if issue["body"] else "No description provided"
-            if len(description) > 300:
-                description = description[:297] + "..."
-
+            # Get labels (limit to 3 for brevity)
             labels_text = ""
             if issue["labels"]:
-                label_names = [
-                    f"`{escape_md_v2(label['name'])}`" for label in issue["labels"]
-                ]
-                labels_text = f"\n🏷 Labels: {', '.join(label_names)}"
-
-            assignee_text = ""
-            if (
-                "assignees" in issue
-                and issue["assignees"]
-                and len(issue["assignees"]) > 0
-            ):
-                assignees = [
-                    f"[{escape_md_v2(a['login'])}]({a['html_url']})"
-                    for a in issue["assignees"]
-                ]
-                assignee_text = f"\n👤 Assigned to: {', '.join(assignees)}"
-            else:
-                assignee_text = "\n👤 No one assigned yet"
-
-            title_escaped = escape_md_v2(title)
-            repo_name_escaped = escape_md_v2(payload["repository"]["name"])
-            user_escaped = escape_md_v2(user)
-            description_escaped = escape_md_v2(description)
-
+                label_names = [f"`{escape_md_v2(label['name'])}`" for label in issue["labels"][:3]]
+                if len(issue["labels"]) > 3:
+                    label_names.append("\\+more")
+                labels_text = f" • {', '.join(label_names)}"
+            
             message = (
-                f"🔔 *New Issue Opened*\n\n"
-                f"📝 Title: *{title_escaped}*\n"
-                f"📂 Repository: [{repo_name_escaped}]({payload['repository']['html_url']})\n"
-                f"👤 Created by: [{user_escaped}]({issue['user']['html_url']})"
-                f"{labels_text}"
-                f"{assignee_text}\n\n"
-                f"💬 Description:\n"
-                f"{description_escaped}\n\n"
-                f"[View Issue \\→]({url})"
+                f"🐛 *New Issue Spotted\\!*\n\n"
+                f"*{title_escaped}*\n"
+                f"👤 [{user_escaped}]({user_url_escaped}) opened an issue in "
+                f"[{repo_escaped}]({repo_url_escaped}) \\#{issue_number}"
+                f"{labels_text}\n\n"
+                f"[🔍 Take a look]({issue_url_escaped})"
             )
         elif action == "closed":
             message = (
-                f"🔒 *Issue Closed*\n\n"
-                f"📝 Title: *{escape_md_v2(title)}*\n"
-                f"📂 Repository: [{escape_md_v2(repo)}]({payload['repository']['html_url']})\n"
-                f"👤 Closed by: [{escape_md_v2(user)}]({issue['user']['html_url']})\n\n"
-                f"[View Issue \\→]({url})"
+                f"✅ *Issue Resolved\\!*\n\n"
+                f"Issue *{title_escaped}* has been closed by "
+                f"[{user_escaped}]({user_url_escaped}) in "
+                f"[{repo_escaped}]({repo_url_escaped})\n\n"
+                f"[See details]({issue_url_escaped})"
             )
 
         return message
