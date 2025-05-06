@@ -100,6 +100,19 @@ def start(update: Update, context: CallbackContext) -> None:
 
     # Check if this is a group chat
     if not is_private_chat(update):
+        # Get user data to check if profile is complete
+        user_data = database.get_user(user_id)
+        has_github = bool(user_data.get("github_username") if user_data else None)
+        has_wallet = bool(user_data.get("wallet_address") if user_data else None)
+        
+        # If profile is already complete, don't redirect to DM
+        if has_github and has_wallet:
+            update.message.reply_text(
+                f"Hi {user.first_name}! Your builder profile is already set up. "
+                f"You can use /profile to view it."
+            )
+            return
+            
         # Remember originating group
         group_id = update.message.chat.id
         user_setup_state[user_id] = {"group_id": group_id, "step": "invited"}
@@ -183,25 +196,17 @@ def help_command(update: Update, context: CallbackContext) -> None:
     help_text = (
         "🤖 *Zo House Builder Bot Commands* 🤖\n\n"
         "*General Commands:*\n"
-        "/start \\- Start the bot\n"
+        "/start \\- Setup your profile\n"
         "/help \\- Show this help message\n\n"
         "*Profile & Scores:*\n"
         "/profile \\- View your builder profile\n"
-        "/score \\- Check your builder score\n"
-        "/linkgithub \\- Add your GitHub username\n"
-        "/linkwallet \\- Add your crypto wallet\n\n"
+        "/score \\- Check your builder score\n\n"
         "*Projects & Building:*\n"
         "/projects \\- Browse featured projects\n"
         "/contribute \\- See contribution opportunities\n"
-        "/submit \\- Submit a new project\n"
-        "/nominate \\- Nominate a builder for recognition\n\n"
+        "/nominate \\- Nominate a builder for recognition \(ex: `/nominate username`\)\n\n"
         "*Community:*\n"
         "/leaderboard \\- View top builders\n"
-        "/recap \\- See weekly community recap\n\n"
-        "For admin commands, use /adminhelp"
-        "*Community:*\n"
-        "/leaderboard \\- View top builders\n"
-        "/recap \\- See weekly community recap\n"
     )
     update.message.reply_text(help_text, parse_mode="MarkdownV2")
 
@@ -215,7 +220,7 @@ def profile_command(update: Update, context: CallbackContext) -> None:
         # Check if we're in a group or private chat
         if not is_private_chat(update):
             # In group chat - redirect to DM
-            group_id = update.chat.id
+            group_id = update.effective_chat.id  # Fix: use effective_chat instead of chat
             user_setup_state[user_id] = {"group_id": group_id, "step": "invited"}
 
             group_msg = (
@@ -243,6 +248,7 @@ def profile_command(update: Update, context: CallbackContext) -> None:
     github_username = user_data.get("github_username", "Not added")
     wallet_address = user_data.get("wallet_address", "Not added")
     builder_score = user_data.get("builder_score", 0)
+    nominations_received = user_data.get("nominations_received", 0)
 
     # Format wallet address display with null check
     if isinstance(wallet_address, str) and len(wallet_address) > 10:
@@ -250,18 +256,27 @@ def profile_command(update: Update, context: CallbackContext) -> None:
     else:
         wallet_display = wallet_address
 
+    # Format builder_score for display and escape special characters
+    if isinstance(builder_score, float):
+        score_str = f"{builder_score:.2f}"
+    else:
+        score_str = str(builder_score)
+    escaped_score = escape_markdown_v2(score_str)
+    
     # Escape dynamic content for MarkdownV2
     escaped_username = escape_markdown_v2(update.effective_user.username or "Not set")
     escaped_github = escape_markdown_v2(github_username)
     escaped_wallet = escape_markdown_v2(str(wallet_display))
+    escaped_nominations = escape_markdown_v2(str(nominations_received))
 
     # Build profile text
     profile_text = (
         f"🏗️ *Builder Profile* 🏗️\n\n"
         f"Username: @{escaped_username}\n"
-        f"Builder Score: {builder_score} points\n"
+        f"Builder Score: {escaped_score} points\n"
         f"GitHub: {escaped_github}\n"
         f"Wallet: {escaped_wallet}\n"
+        f"Nominations received: {escaped_nominations}\n"
     )
 
     # Prompt to complete profile if needed
@@ -457,7 +472,7 @@ def save_github_username(update: Update, context: CallbackContext) -> int:
             return ConversationHandler.END
         else:
             update.message.reply_text(
-                "Please enter your wallet address to complete your profile:"
+                "Please enter your Base wallet address to complete your profile:"
             )
             if user_id in user_setup_state:
                 user_setup_state[user_id]["step"] = "wallet"
@@ -513,7 +528,7 @@ def get_return_to_group_link(group_id):
 def save_wallet_address(update: Update, context: CallbackContext) -> int:
     """Save wallet address and complete profile setup."""
     user_id = update.effective_user.id
-    wallet_address = update.message.text
+    wallet_address = update.message.text.strip()  # Strip whitespace
 
     # Check if wallet is already set
     user_data = database.get_user(user_id)
@@ -522,6 +537,15 @@ def save_wallet_address(update: Update, context: CallbackContext) -> int:
             "Your wallet address is already set and cannot be changed."
         )
         return ConversationHandler.END
+
+    # Validate Ethereum address format
+    import re
+    eth_regex = re.compile(r'^0x[a-fA-F0-9]{40}$')
+    if not eth_regex.match(wallet_address):
+        update.message.reply_text(
+            "Invalid wallet address format. Please enter a valid Base wallet address that starts with '0x' followed by 40 hexadecimal characters:"
+        )
+        return WALLET_ADDRESS
 
     # Save the wallet address
     database.update_user_wallet(user_id, wallet_address)
@@ -533,7 +557,7 @@ def save_wallet_address(update: Update, context: CallbackContext) -> int:
     if len(wallet_address) > 10:
         wallet_display = wallet_address[:6] + "..." + wallet_address[-4:]
     else:
-        wallet_display = wallet_display
+        wallet_display = wallet_address  # Fixed: was using undefined wallet_display variable
 
     escaped_wallet = escape_markdown_v2(wallet_display)
 
@@ -778,25 +802,6 @@ def send_github_engagement_reminder(context: CallbackContext):
         print(f"Error in GitHub engagement reminder: {e}")
 
 
-def admin_help_command(update: Update, context: CallbackContext) -> None:
-    """Show admin commands."""
-    user_id = update.effective_user.id
-
-    # Check if user is an admin
-    if user_id:
-        update.message.reply_text(
-            "Sorry, this command is only available to administrators."
-        )
-        return
-
-    admin_text = (
-        "🔧 *Admin Commands* 🔧\n\n"
-        "/broadcast \\- Send a message to all users\n\n"
-        "More admin features coming soon\\!"
-    )
-    update.message.reply_text(admin_text, parse_mode="MarkdownV2")
-
-
 def handle_group_message(update: Update, context: CallbackContext) -> None:
     """Process group messages to track user activity."""
     # Debug logging
@@ -979,6 +984,150 @@ def leaderboard_command(update: Update, context: CallbackContext) -> None:
         )
 
 
+def score_command(update: Update, context: CallbackContext) -> None:
+    """Show the user's builder score."""
+    user_id = update.effective_user.id
+    user_data = database.get_user(user_id)
+
+    if not user_data:
+        # User doesn't have a profile - prompt them to create one
+        if not is_private_chat(update):
+            # In group chat - redirect to DM
+            group_msg = (
+                f"Hi {update.effective_user.first_name}! "
+                f"Please set up your profile in our private chat first to view your score."
+            )
+            update.message.reply_text(group_msg)
+
+            # Send DM to user
+            context.bot.send_message(
+                user_id,
+                f"Hi {update.effective_user.first_name}! Let's set up your Zo House Builder profile. "
+                f"Type /start to begin.",
+            )
+        else:
+            # In private chat - start setup
+            update.message.reply_text(
+                "You need to set up your profile first to track your score\\. Let's do that now\\!",
+                parse_mode="MarkdownV2",
+            )
+            return start_private_setup_flow(update, context)
+        return
+
+    # Get the score, default to 0 if not set
+    builder_score = user_data.get("builder_score", 0)
+
+    # Format score to 2 decimal places if it's a float
+    if isinstance(builder_score, float):
+        score_str = f"{builder_score:.2f}"
+    else:
+        score_str = str(builder_score)
+
+    # Escape for MarkdownV2
+    escaped_score = escape_markdown_v2(score_str)
+
+    # Build motivational text based on score
+    if float(builder_score) == 0:
+        motivation = "Start contributing to earn your first points\\!"
+    elif float(builder_score) < 10:
+        motivation = "Great start\\! Keep engaging with the community\\."
+    elif float(builder_score) < 50:
+        motivation = (
+            "You're making good progress\\! Check out more ways to contribute\\."
+        )
+    else:
+        motivation = "Impressive score\\! You're a valuable builder in our community\\."
+
+    score_text = (
+        f"🏆 *Your Builder Score* 🏆\n\n"
+        f"Current Score: *{escaped_score} points*\n\n"
+        f"{motivation}\n\n"
+        f"*How to increase your score:*\n"
+        f"• Engage in group discussions\n"
+        f"• Contribute to GitHub projects\n"
+        f"• Help other community members\n"
+        f"Use /leaderboard to see the top builders\\!"
+    )
+
+    update.message.reply_text(score_text, parse_mode="MarkdownV2")
+
+
+def nominate_command(update: Update, context: CallbackContext) -> None:
+    """Nominate a fellow builder to give them recognition."""
+    user_id = update.effective_user.id
+    user_data = database.get_user(user_id)
+
+    # Check if user has a profile
+    if not user_data:
+        update.message.reply_text(
+            "You need to set up your profile first before nominating others\\. Use /start to set up your profile\\.",
+            parse_mode="MarkdownV2",
+        )
+        return
+
+    # Check if command has arguments (username to nominate)
+    if not context.args:
+        update.message.reply_text(
+            "Please specify the username of the builder you want to nominate\\.\n"
+            "Example: `/nominate username`",
+            parse_mode="MarkdownV2",
+        )
+        return
+
+    # Get the username to nominate (remove @ if present)
+    nominee_username = context.args[0].lstrip("@")
+
+    # Process the nomination
+    result = database.add_nomination(user_id, nominee_username)
+
+    if result["status"] == "success":
+        # Format the nominee's data for display
+        nominee = result["nominee"]
+        current_nominations = nominee.get("nominations_received", 0)
+
+        # Recalculate builder scores
+        users_data = database.get_all_users()
+        if users_data:
+            response = compute_builder_scores(users_data)
+            for r in response:
+                database.update_user_builder_score(
+                    r.get("user_id"), r.get("builder_score")
+                )
+
+        # Send a nice confirmation message
+        escaped_username = escape_markdown_v2(nominee_username)
+        escaped_name = escape_markdown_v2(nominee.get("first_name", nominee_username))
+
+        success_message = (
+            f"🎖 *Nomination Successful\\!* 🎖\n\n"
+            f"You have nominated @{escaped_username} as a valuable Zo House builder\\!\n\n"
+            f"{escaped_name} has now received *{current_nominations}* nomination\\(s\\)\\.\n\n"
+            f"Thank you for recognizing great contributors to our community\\!"
+        )
+
+        update.message.reply_text(success_message, parse_mode="MarkdownV2")
+
+        # Notify the nominated user (if we can)
+        try:
+            nominee_id = nominee.get("user_id")
+            if nominee_id:
+                nominator_name = escape_markdown_v2(update.effective_user.first_name)
+                notification = (
+                    f"🌟 *You've been nominated\\!* 🌟\n\n"
+                    f"{nominator_name} has recognized you as a valuable Zo House builder\\!\n\n"
+                    f"You now have *{current_nominations}* nomination\\(s\\) in total\\.\n\n"
+                    f"Keep up the great work\\!"
+                )
+                context.bot.send_message(
+                    chat_id=nominee_id, text=notification, parse_mode="MarkdownV2"
+                )
+        except Exception as e:
+            logger.error(f"Error sending nomination notification: {e}")
+    else:
+        # Send error message
+        update.message.reply_text(f"⚠️ {result['message']}", parse_mode="None")
+
+
 def main() -> None:
     # Start both the telegram bot and the handler server in separate threads
 
@@ -995,16 +1144,16 @@ def main() -> None:
     dispatcher.add_handler(CommandHandler("projects", projects_command))
     dispatcher.add_handler(CommandHandler("contribute", contribute_command))
     dispatcher.add_handler(CommandHandler("test", test_command))
+    dispatcher.add_handler(CommandHandler("leaderboard", leaderboard_command))
+    dispatcher.add_handler(CommandHandler("score", score_command))
     dispatcher.add_handler(
-        CommandHandler("leaderboard", leaderboard_command)
-    )  # Add this line
+        CommandHandler("nominate", nominate_command)
+    )  # Add nominate command handler
 
     # This is the main conversation handler for profile setup
     profile_setup_handler = ConversationHandler(
         entry_points=[
             CommandHandler("start", start),
-            CommandHandler("linkgithub", linkgithub_command),
-            CommandHandler("linkwallet", linkwallet_command),
             CommandHandler("profile", profile_command),
             CallbackQueryHandler(
                 button_callback, pattern="^(setup_github|link_wallet|start_setup)$"
@@ -1035,9 +1184,6 @@ def main() -> None:
     # Add start handler - but make sure it's added AFTER the conversation handler
     # that includes 'start' as an entry point to avoid conflicts
     dispatcher.add_handler(CommandHandler("start", start))
-
-    # Admin commands
-    dispatcher.add_handler(CommandHandler("adminhelp", admin_help_command))
 
     dispatcher.add_handler(
         MessageHandler(

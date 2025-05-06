@@ -1,3 +1,4 @@
+from typing import Any, Dict, List, Optional
 import datetime
 
 import pymongo
@@ -9,7 +10,6 @@ from config import MONGODB_DB, MONGODB_URI
 # Initialize MongoDB connection with error handling
 try:
     # Create a new client with ServerApi v1 for MongoDB Atlas
-    print(MONGODB_URI)
     client = MongoClient(MONGODB_URI, server_api=ServerApi("1"))
 
     # Verify connection with ping command
@@ -33,10 +33,12 @@ projects_collection = db["projects"]
 activities_collection = db["activities"]
 
 
-def get_or_create_user(user_id, username=None, first_name=None):
-    """Get a user document or create it if it doesn't exist."""
+def get_or_create_user(
+    user_id: int, username: Optional[str], first_name: str
+) -> Dict[str, Any]:
+    """Get existing user or create a new one"""
     user = users_collection.find_one({"user_id": user_id})
-
+    
     if not user:
         user = {
             "user_id": user_id,
@@ -45,100 +47,143 @@ def get_or_create_user(user_id, username=None, first_name=None):
             "github_username": None,
             "wallet_address": None,
             "builder_score": 0,
-            "telegram_activity": {
-                "messages": 0,
-                "replies": 0,
-            },
-            "github_contributions": {
-                "commits": 0,
-                "prs": 0,
-                "issues": 0,
-            },
+            "github_contributions": {"commits": 0, "prs": 0, "issues": 0},
+            "telegram_activity": {"messages": 0, "replies": 0},
+            "nominations_received": 0,
+            "nominations_given": [],
             "created_at": datetime.datetime.now(),
         }
         users_collection.insert_one(user)
-        return user, True  # Return user and True to indicate this is a new user
+    
+    return user
 
-    return user, False  # Return user and False to indicate not a new user
 
-
-def get_user(user_id):
-    """Get a user document by Telegram user ID."""
+def get_user(user_id: int) -> Optional[Dict[str, Any]]:
+    """Get user by ID"""
     return users_collection.find_one({"user_id": user_id})
 
 
-def update_user_github(user_id, github_username):
-    """Update user's GitHub username in the database."""
+def get_user_by_username(username: str) -> Optional[Dict[str, Any]]:
+    """Get user by Telegram username"""
+    return users_collection.find_one({"username": username})
+
+
+def get_all_users() -> List[Dict[str, Any]]:
+    """Get all users"""
+    try:
+        return list(users_collection.find({}, {"_id": 0}))
+    except Exception as e:
+        print(f"Error getting all users: {e}")
+        return []
+
+
+def update_user_github(user_id: int, github_username: str) -> bool:
+    """Update user's GitHub username"""
     result = users_collection.update_one(
         {"user_id": user_id}, {"$set": {"github_username": github_username}}
     )
     return result.modified_count > 0
 
 
-def update_user_wallet(user_id, wallet_address):
-    """Update a user's wallet address."""
-    return users_collection.update_one(
+def update_user_wallet(user_id: int, wallet_address: str) -> bool:
+    """Update user's wallet address"""
+    result = users_collection.update_one(
         {"user_id": user_id}, {"$set": {"wallet_address": wallet_address}}
     )
+    return result.modified_count > 0
 
 
-
-def get_top_builders(limit=10):
-    """Get the top builders by score."""
-    return list(users_collection.find().sort("builder_score", -1).limit(limit))
-
-
-def save_project(project_data):
-    """Save a project to the database."""
-    project_data["created_at"] = datetime.datetime.now()
-    return projects_collection.insert_one(project_data)
-
-
-def get_projects(limit=10):
-    """Get the most recent projects."""
-    return list(projects_collection.find().sort("created_at", -1).limit(limit))
-
-
-def get_all_users():
-    """Get all users from the database"""
-    try:
-        users = list(users_collection.find({}, {"_id": 0}))
-        return users
-    except Exception as e:
-        print(f"Error getting all users: {e}")
-        return []
-
-
-def update_telegram_activity(user_id, activity_type):
-    """
-    Update a user's Telegram activity metrics.
-
-    Args:
-        user_id (int): The Telegram user ID
-        activity_type (str): One of 'messages', 'replies'
-
-    Returns:
-        bool: True if update was successful, False otherwise
-    """
+def update_telegram_activity(user_id: int, activity_type: str) -> bool:
+    """Update user's Telegram activity"""
     if activity_type not in ["messages", "replies"]:
         print(f"Invalid activity type: {activity_type}")
         return False
-
+    
     # Update the specific activity count
     update_field = f"telegram_activity.{activity_type}"
     result = users_collection.update_one(
         {"user_id": user_id}, {"$inc": {update_field: 1}}
     )
-
+    
     return result.modified_count > 0
 
 
-def get_user_by_github_username(github_username):
+def update_user_builder_score(user_id: int, score: float) -> bool:
+    """Update user's builder score"""
+    result = users_collection.update_one(
+        {"user_id": user_id}, {"$set": {"builder_score": score}}
+    )
+    return result.modified_count > 0
+
+
+def add_nomination(nominator_id: int, nominee_username: str) -> dict:
+    """
+    Add a nomination from one user to another.
+
+    Args:
+        nominator_id: User ID of the nominator
+        nominee_username: Username of the person being nominated
+
+    Returns:
+        dict: Result with status, message and nominee data if successful
+    """
+    # Check if nominator exists
+    nominator = users_collection.find_one({"user_id": nominator_id})
+    if not nominator:
+        return {
+            "status": "error",
+            "message": "You must set up your profile before nominating others",
+        }
+
+    # Find nominee by username
+    nominee = users_collection.find_one({"username": nominee_username})
+
+    # If nominee not found
+    if not nominee:
+        return {
+            "status": "error",
+            "message": f"User @{nominee_username} not found. Make sure they have set up their profile.",
+        }
+
+    # Check if nominating self
+    if nominator_id == nominee["user_id"]:
+        return {"status": "error", "message": "You cannot nominate yourself"}
+
+    # Check if already nominated this user
+    nominations_given = nominator.get("nominations_given", [])
+    if nominee_username in nominations_given:
+        return {
+            "status": "error",
+            "message": f"You have already nominated @{nominee_username}",
+        }
+
+    # Add nomination
+    users_collection.update_one(
+        {"user_id": nominator_id},
+        {"$push": {"nominations_given": nominee_username}}
+    )
+
+    users_collection.update_one(
+        {"user_id": nominee["user_id"]},
+        {"$inc": {"nominations_received": 1}}
+    )
+
+    # Get updated nominee data
+    updated_nominee = users_collection.find_one({"username": nominee_username})
+
+    return {
+        "status": "success",
+        "message": f"You have successfully nominated @{nominee_username}",
+        "nominee": updated_nominee,
+    }
+
+
+def get_user_by_github_username(github_username: str) -> Optional[Dict[str, Any]]:
     """Get a user document by GitHub username."""
     return users_collection.find_one({"github_username": github_username})
 
 
-def update_github_contribution(github_username, contribution_type):
+def update_github_contribution(github_username: str, contribution_type: str) -> bool:
     """
     Update a user's GitHub contributions count.
 
@@ -168,18 +213,17 @@ def update_github_contribution(github_username, contribution_type):
     return result.modified_count > 0
 
 
-def update_user_builder_score(user_id, score):
-    """
-    Update a user's builder score.
+def get_top_builders(limit=10):
+    """Get the top builders by score."""
+    return list(users_collection.find().sort("builder_score", -1).limit(limit))
 
-    Args:
-        user_id (int): The Telegram user ID
-        score (float): The new builder score
 
-    Returns:
-        bool: True if update was successful, False otherwise
-    """
-    result = users_collection.update_one(
-        {"user_id": user_id}, {"$set": {"builder_score": score}}
-    )
-    return result.modified_count > 0
+def save_project(project_data):
+    """Save a project to the database."""
+    project_data["created_at"] = datetime.datetime.now()
+    return projects_collection.insert_one(project_data)
+
+
+def get_projects(limit=10):
+    """Get the most recent projects."""
+    return list(projects_collection.find().sort("created_at", -1).limit(limit))
